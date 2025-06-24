@@ -85,8 +85,8 @@ class SharedARView: ARView {
         })
     }
     
-    private func isPointNearCenter(point: CGPoint, center: CGPoint) -> Bool {
-        return abs(point.x - center.x) < 0.05 && abs(point.y - center.y) < 0.05
+    private func isPointNearCenter(point: simd_float2, center: CGPoint) -> Bool {
+        return abs(point.x - Float(center.x)) < 0.05 && abs(point.y - Float(center.y)) < 0.05
     }
 
     private func raycastLength(at screenPoint: CGPoint) {

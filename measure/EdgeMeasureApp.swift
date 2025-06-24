@@ -22,7 +22,7 @@ class SharedARView: ARView {
     private let visionQueue = DispatchQueue(label: "vision-edge-detection")
     var onEdgeLengthUpdate: ((Float) -> Void)?
 
-    override init(frame: CGRect) {
+    required init(frame: CGRect) {
         super.init(frame: frame)
         self.setupFrameProcessing()
     }
@@ -50,7 +50,7 @@ class SharedARView: ARView {
             
             do {
                 try handler.perform([request])
-                guard let observations = request.results?.first else { return }
+                guard let observations = request.results?.first as? VNContoursObservation else { return }
 
                 let center = CGPoint(x: 0.5, y: 0.5)
                 
@@ -63,6 +63,7 @@ class SharedARView: ARView {
                 print("Vision error: \(error)")
             }
         }
+
     }
 
     private func findEdgeNearCenter(observations: VNContoursObservation, center: CGPoint) -> VNContoursObservation? {
@@ -109,32 +110,4 @@ struct ARViewContainer: UIViewRepresentable {
     func updateUIView(_ uiView: SharedARView, context: Context) {}
 }
 
-struct ContentView: View {
-    @State private var edgeLength: Float = 0.0
 
-    var body: some View {
-        ZStack {
-            ARViewContainer(edgeLength: $edgeLength)
-                .edgesIgnoringSafeArea(.all)
-
-            VStack {
-                Spacer()
-                Text(String(format: "Edge Length: %.2f m", edgeLength))
-                    .padding()
-                    .background(Color.black.opacity(0.6))
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
-                    .padding(.bottom, 30)
-            }
-        }
-    }
-}
-
-@main
-struct EdgeMeasureApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
-    }
-}

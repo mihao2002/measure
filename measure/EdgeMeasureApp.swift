@@ -77,7 +77,7 @@ class SharedARView: ARView {
         return false
     }
     
-    private func hasPointNearCenter(contour: VNContoursObservation, center: CGPoint) -> Bool {
+    private func hasPointNearCenter(contour: VNContour, center: CGPoint) -> Bool {
         // Get the normalized points for this contour
         let points = contour.normalizedPoints
         return points.contains(where: { point in

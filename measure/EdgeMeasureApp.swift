@@ -31,7 +31,7 @@ class SharedARView: ARView {
     // Store the last detected edge points for real-time updates
     private var lastDetectedEdgePoints: (SIMD3<Float>, SIMD3<Float>)?
     private var lastEdgeFound: Bool = false
-    private var lastDetectedSegment: VNLineSegmentsObservation?
+    private var lastDetectedRectangle: VNRectangleObservation?
 
     required init(frame: CGRect) {
         super.init(frame: frame)
@@ -61,17 +61,19 @@ class SharedARView: ARView {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
 
-        // Use line segment detection instead of contour detection
-        let request = VNDetectLineSegmentsRequest()
-        request.minimumLineLength = 0.1  // Minimum line length (normalized)
-        request.minimumNumberOfPoints = 2
+        // Use rectangle detection to find straight edges
+        let request = VNDetectRectanglesRequest()
+        request.minimumAspectRatio = 0.1  // Allow very thin rectangles (lines)
+        request.maximumAspectRatio = 10.0  // Allow very wide rectangles
+        request.minimumSize = 0.1  // Minimum size
+        request.maximumObservations = 10  // Limit number of detections
 
         visionQueue.async { [weak self] in
             guard let self = self else { return }
             
             do {
                 try handler.perform([request])
-                guard let observations = request.results?.first as? VNLineSegmentsObservation else { return }
+                guard let observations = request.results?.first as? VNRectangleObservation else { return }
 
                 let center = CGPoint(x: 0.5, y: 0.5)
                 
@@ -84,7 +86,7 @@ class SharedARView: ARView {
                     // No edge found, clear stored points
                     self.lastDetectedEdgePoints = nil
                     self.lastEdgeFound = false
-                    self.lastDetectedSegment = nil
+                    self.lastDetectedRectangle = nil
                 }
                 
                 // Store the detection state
@@ -98,32 +100,45 @@ class SharedARView: ARView {
         }
     }
 
-    private func findStraightEdgeNearCenter(observations: VNLineSegmentsObservation, center: CGPoint) -> Bool {
-        // Check if any line segment has points near the center
-        for segmentIndex in 0..<observations.lineSegments.count {
-            let segment = observations.lineSegments[segmentIndex]
-            if hasPointNearCenter(segment: segment, center: center) {
-                // Store the detected segment
-                lastDetectedSegment = observations
-                return true
-            }
+    private func findStraightEdgeNearCenter(observations: VNRectangleObservation, center: CGPoint) -> Bool {
+        // Check if the rectangle passes near the center
+        if hasPointNearCenter(rectangle: observations, center: center) {
+            // Store the detected rectangle
+            lastDetectedRectangle = observations
+            return true
         }
         
-        // No segment found, clear stored segment
-        lastDetectedSegment = nil
+        // No rectangle found, clear stored rectangle
+        lastDetectedRectangle = nil
         return false
     }
     
-    private func hasPointNearCenter(segment: VNLineSegmentsObservation.LineSegment, center: CGPoint) -> Bool {
-        // Check if the line segment passes near the center
-        let startPoint = segment.startPoint
-        let endPoint = segment.endPoint
+    private func hasPointNearCenter(rectangle: VNRectangleObservation, center: CGPoint) -> Bool {
+        // Check if any of the rectangle's edges pass near the center
+        let topLeft = rectangle.topLeft
+        let topRight = rectangle.topRight
+        let bottomLeft = rectangle.bottomLeft
+        let bottomRight = rectangle.bottomRight
         
-        // Check if either endpoint is near center, or if line passes through center
-        let startNearCenter = abs(startPoint.x - Float(center.x)) < 0.05 && abs(startPoint.y - Float(center.y)) < 0.05
-        let endNearCenter = abs(endPoint.x - Float(center.x)) < 0.05 && abs(endPoint.y - Float(center.y)) < 0.05
+        // Check if center is near any of the rectangle's edges
+        let centerNearTopEdge = isPointNearLine(start: topLeft, end: topRight, point: center)
+        let centerNearBottomEdge = isPointNearLine(start: bottomLeft, end: bottomRight, point: center)
+        let centerNearLeftEdge = isPointNearLine(start: topLeft, end: bottomLeft, point: center)
+        let centerNearRightEdge = isPointNearLine(start: topRight, end: bottomRight, point: center)
         
-        return startNearCenter || endNearCenter
+        return centerNearTopEdge || centerNearBottomEdge || centerNearLeftEdge || centerNearRightEdge
+    }
+    
+    private func isPointNearLine(start: CGPoint, end: CGPoint, point: CGPoint) -> Bool {
+        // Calculate distance from point to line segment
+        let lineLength = sqrt(pow(end.x - start.x, 2) + pow(end.y - start.y, 2))
+        if lineLength == 0 { return false }
+        
+        let t = max(0, min(1, ((point.x - start.x) * (end.x - start.x) + (point.y - start.y) * (end.y - start.y)) / (lineLength * lineLength)))
+        let projection = CGPoint(x: start.x + t * (end.x - start.x), y: start.y + t * (end.y - start.y))
+        
+        let distance = sqrt(pow(point.x - projection.x, 2) + pow(point.y - projection.y, 2))
+        return distance < 0.05  // 5% of image size tolerance
     }
 
     private func raycastLength(at screenPoint: CGPoint) {
@@ -230,7 +245,7 @@ class SharedARView: ARView {
                 }
                 
                 // Show detected line segment
-                self.showDetectedLineSegment()
+                self.showDetectedRectangle()
                 
                 // Highlight center indicator
                 self.centerIndicatorView?.backgroundColor = UIColor.green.withAlphaComponent(0.3)
@@ -266,40 +281,46 @@ class SharedARView: ARView {
         }
     }
 
-    private func showDetectedLineSegment() {
+    private func showDetectedRectangle() {
         guard let contourView = contourOverlayView,
-              let observations = lastDetectedSegment else { return }
+              let rectangle = lastDetectedRectangle else { return }
         
         contourView.isHidden = false
         
-        // Find the line segment that passes near the center
-        let center = CGPoint(x: 0.5, y: 0.5)
+        // Draw the rectangle edges
         let path = UIBezierPath()
         
-        for segment in observations.lineSegments {
-            if hasPointNearCenter(segment: segment, center: center) {
-                // Convert normalized line segment points to screen coordinates
-                let startPoint = CGPoint(
-                    x: CGFloat(segment.startPoint.x) * bounds.width,
-                    y: CGFloat(segment.startPoint.y) * bounds.height
-                )
-                let endPoint = CGPoint(
-                    x: CGFloat(segment.endPoint.x) * bounds.width,
-                    y: CGFloat(segment.endPoint.y) * bounds.height
-                )
-                
-                path.move(to: startPoint)
-                path.addLine(to: endPoint)
-                break
-            }
-        }
+        // Convert normalized rectangle points to screen coordinates
+        let topLeft = CGPoint(
+            x: CGFloat(rectangle.topLeft.x) * bounds.width,
+            y: CGFloat(rectangle.topLeft.y) * bounds.height
+        )
+        let topRight = CGPoint(
+            x: CGFloat(rectangle.topRight.x) * bounds.width,
+            y: CGFloat(rectangle.topRight.y) * bounds.height
+        )
+        let bottomLeft = CGPoint(
+            x: CGFloat(rectangle.bottomLeft.x) * bounds.width,
+            y: CGFloat(rectangle.bottomLeft.y) * bounds.height
+        )
+        let bottomRight = CGPoint(
+            x: CGFloat(rectangle.bottomRight.x) * bounds.width,
+            y: CGFloat(rectangle.bottomRight.y) * bounds.height
+        )
+        
+        // Draw rectangle edges
+        path.move(to: topLeft)
+        path.addLine(to: topRight)
+        path.addLine(to: bottomRight)
+        path.addLine(to: bottomLeft)
+        path.addLine(to: topLeft)
         
         // Update the contour layer
         if let contourLayer = contourView.layer.sublayers?.first as? CAShapeLayer {
             contourLayer.path = path.cgPath
         }
         
-        print("Drawing line segment")
+        print("Drawing rectangle")
     }
 
     private func updateVisualFeedbackFromLastDetection() {

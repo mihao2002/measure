@@ -31,7 +31,7 @@ class SharedARView: ARView {
     // Store the last detected edge points for real-time updates
     private var lastDetectedEdgePoints: (SIMD3<Float>, SIMD3<Float>)?
     private var lastEdgeFound: Bool = false
-    private var lastDetectedContour: VNContour?
+    private var lastDetectedSegment: VNLineSegment?
 
     required init(frame: CGRect) {
         super.init(frame: frame)
@@ -61,19 +61,21 @@ class SharedARView: ARView {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
 
-        let request = VNDetectContoursRequest()
-        request.detectsDarkOnLight = true
+        // Use line segment detection instead of contour detection
+        let request = VNDetectLineSegmentsRequest()
+        request.minimumLineLength = 0.1  // Minimum line length (normalized)
+        request.minimumNumberOfPoints = 2
 
         visionQueue.async { [weak self] in
             guard let self = self else { return }
             
             do {
                 try handler.perform([request])
-                guard let observations = request.results?.first as? VNContoursObservation else { return }
+                guard let observations = request.results?.first as? VNLineSegmentsObservation else { return }
 
                 let center = CGPoint(x: 0.5, y: 0.5)
                 
-                let edgeFound = self.findEdgeNearCenter(observations: observations, center: center)
+                let edgeFound = self.findStraightEdgeNearCenter(observations: observations, center: center)
                 if edgeFound {
                     DispatchQueue.main.async {
                         self.raycastLength(at: CGPoint(x: self.bounds.midX, y: self.bounds.midY))
@@ -82,7 +84,7 @@ class SharedARView: ARView {
                     // No edge found, clear stored points
                     self.lastDetectedEdgePoints = nil
                     self.lastEdgeFound = false
-                    self.lastDetectedContour = nil
+                    self.lastDetectedSegment = nil
                 }
                 
                 // Store the detection state
@@ -94,28 +96,27 @@ class SharedARView: ARView {
                 print("Vision error: \(error)")
             }
         }
-
     }
 
-    private func findEdgeNearCenter(observations: VNContoursObservation, center: CGPoint) -> Bool {
-        // Check if any contour has points near the center
-        for contourIndex in 0..<observations.topLevelContours.count {
-            let contour = observations.topLevelContours[contourIndex]
-            if hasPointNearCenter(contour: contour, center: center) {
-                // Store the detected contour
-                lastDetectedContour = contour
+    private func findStraightEdgeNearCenter(observations: VNLineSegmentsObservation, center: CGPoint) -> Bool {
+        // Check if any line segment has points near the center
+        for segmentIndex in 0..<observations.lineSegments.count {
+            let segment = observations.lineSegments[segmentIndex]
+            if hasPointNearCenter(segment: segment, center: center) {
+                // Store the detected segment
+                lastDetectedSegment = segment
                 return true
             }
         }
         
-        // No contour found, clear stored contour
-        lastDetectedContour = nil
+        // No segment found, clear stored segment
+        lastDetectedSegment = nil
         return false
     }
     
-    private func hasPointNearCenter(contour: VNContour, center: CGPoint) -> Bool {
-        // Get the normalized points for this contour
-        let points = contour.normalizedPoints
+    private func hasPointNearCenter(segment: VNLineSegment, center: CGPoint) -> Bool {
+        // Get the normalized points for this segment
+        let points = segment.normalizedPoints
         return points.contains(where: { point in
             return self.isPointNearCenter(point: point, center: center)
         })
@@ -228,8 +229,8 @@ class SharedARView: ARView {
                     self.showMeasurementLine(from: points.0, to: points.1)
                 }
                 
-                // Show detected contour
-                self.showDetectedContour()
+                // Show detected line segment
+                self.showDetectedLineSegment()
                 
                 // Highlight center indicator
                 self.centerIndicatorView?.backgroundColor = UIColor.green.withAlphaComponent(0.3)
@@ -265,15 +266,15 @@ class SharedARView: ARView {
         }
     }
 
-    private func showDetectedContour() {
+    private func showDetectedLineSegment() {
         guard let contourView = contourOverlayView,
-              let contour = lastDetectedContour else { return }
+              let segment = lastDetectedSegment else { return }
         
         contourView.isHidden = false
         
-        // Convert normalized contour points to screen coordinates
+        // Convert normalized line segment points to screen coordinates
         let path = UIBezierPath()
-        let points = contour.normalizedPoints
+        let points = segment.normalizedPoints
         
         guard !points.isEmpty else { return }
         
@@ -298,7 +299,7 @@ class SharedARView: ARView {
             contourLayer.path = path.cgPath
         }
         
-        print("Drawing contour with \(points.count) points")
+        print("Drawing line segment with \(points.count) points")
     }
 
     private func updateVisualFeedbackFromLastDetection() {

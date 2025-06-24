@@ -1,4 +1,3 @@
-
 // EdgeMeasureApp.swift
 // MVP Prototype: Detect and measure an edge using ARKit + Vision + SwiftUI
 
@@ -46,17 +45,16 @@ class SharedARView: ARView {
         let request = VNDetectContoursRequest()
         request.detectsDarkOnLight = true
 
-        visionQueue.async {
+        visionQueue.async { [weak self] in
+            guard let self = self else { return }
+            
             do {
                 try handler.perform([request])
                 guard let observations = request.results?.first else { return }
 
                 let center = CGPoint(x: 0.5, y: 0.5)
-                if let edge = observations.normalizedContours.first(where: { contour in
-                    return contour.normalizedPoints.contains(where: {
-                        abs($0.x - center.x) < 0.05 && abs($0.y - center.y) < 0.05
-                    })
-                }) {
+                
+                if let edge = self.findEdgeNearCenter(observations: observations, center: center) {
                     DispatchQueue.main.async {
                         self.raycastLength(at: CGPoint(x: self.bounds.midX, y: self.bounds.midY))
                     }
@@ -65,6 +63,14 @@ class SharedARView: ARView {
                 print("Vision error: \(error)")
             }
         }
+    }
+
+    private func findEdgeNearCenter(observations: VNContoursObservation, center: CGPoint) -> VNContoursObservation? {
+        return observations.normalizedContours.first(where: { contour in
+            return contour.normalizedPoints.contains(where: { point in
+                abs(point.x - center.x) < 0.05 && abs(point.y - center.y) < 0.05
+            })
+        })
     }
 
     private func raycastLength(at screenPoint: CGPoint) {

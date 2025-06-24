@@ -240,8 +240,11 @@ class SharedARView: ARView {
         }
         
         // Convert current 3D world coordinates to 2D screen coordinates
-        let screenPoint1: CGPoint = project(points.0)
-        let screenPoint2: CGPoint = project(points.1)
+        guard let screenPoint1 = project(points.0),
+              let screenPoint2 = project(points.1) else {
+            updateVisualFeedback(edgeFound: false)
+            return
+        }
         
         // Update visual feedback with current 2D projection
         updateVisualFeedback(edgeFound: true, measurementPoints: (screenPoint1, screenPoint2))

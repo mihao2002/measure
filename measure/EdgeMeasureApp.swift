@@ -21,10 +21,16 @@ class SharedARView: ARView {
     private var framePublisher: AnyCancellable?
     private let visionQueue = DispatchQueue(label: "vision-edge-detection")
     var onEdgeLengthUpdate: ((Float) -> Void)?
+    
+    // Visual elements for edge detection feedback
+    private var edgeHighlightEntity: ModelEntity?
+    private var measurementLineEntity: ModelEntity?
+    private var centerIndicatorEntity: ModelEntity?
 
     required init(frame: CGRect) {
         super.init(frame: frame)
         self.setupFrameProcessing()
+        self.setupVisualElements()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -54,11 +60,15 @@ class SharedARView: ARView {
 
                 let center = CGPoint(x: 0.5, y: 0.5)
                 
-                if self.findEdgeNearCenter(observations: observations, center: center) {
+                let edgeFound = self.findEdgeNearCenter(observations: observations, center: center)
+                if edgeFound {
                     DispatchQueue.main.async {
                         self.raycastLength(at: CGPoint(x: self.bounds.midX, y: self.bounds.midY))
                     }
                 }
+                
+                // Update visual feedback
+                self.updateVisualFeedback(edgeFound: edgeFound)
             } catch {
                 print("Vision error: \(error)")
             }
@@ -102,6 +112,73 @@ class SharedARView: ARView {
         let distance = simd_distance(p1, p2)
 
         onEdgeLengthUpdate?(distance)
+        
+        // Update visual feedback with measurement points
+        updateVisualFeedback(edgeFound: true, measurementPoints: (p1, p2))
+    }
+
+    // MARK: - Visual Feedback Methods
+    private func setupVisualElements() {
+        // Create center indicator (crosshair)
+        let centerMaterial = SimpleMaterial(color: .red, isMetallic: false)
+        let centerMesh = MeshResource.generateBox(size: 0.01)
+        centerIndicatorEntity = ModelEntity(mesh: centerMesh, materials: [centerMaterial])
+        
+        // Create measurement line
+        let lineMaterial = SimpleMaterial(color: .yellow, isMetallic: false)
+        let lineMesh = MeshResource.generateBox(size: [0.1, 0.002, 0.002])
+        measurementLineEntity = ModelEntity(mesh: lineMesh, materials: [lineMaterial])
+        
+        // Add to scene
+        if let centerIndicator = centerIndicatorEntity {
+            scene.addAnchor(AnchorEntity(world: [0, 0, -0.5]))
+            scene.anchors.first?.addChild(centerIndicator)
+        }
+    }
+    
+    private func updateVisualFeedback(edgeFound: Bool, measurementPoints: (SIMD3<Float>, SIMD3<Float>)? = nil) {
+        DispatchQueue.main.async {
+            if edgeFound {
+                // Show measurement line
+                if let points = measurementPoints {
+                    self.showMeasurementLine(from: points.0, to: points.1)
+                }
+                
+                // Highlight center indicator
+                self.centerIndicatorEntity?.model?.materials = [SimpleMaterial(color: .green, isMetallic: false)]
+            } else {
+                // Reset center indicator
+                self.centerIndicatorEntity?.model?.materials = [SimpleMaterial(color: .red, isMetallic: false)]
+                
+                // Hide measurement line
+                self.measurementLineEntity?.removeFromParent()
+            }
+        }
+    }
+    
+    private func showMeasurementLine(from startPoint: SIMD3<Float>, to endPoint: SIMD3<Float>) {
+        // Remove existing line
+        measurementLineEntity?.removeFromParent()
+        
+        // Calculate line properties
+        let direction = normalize(endPoint - startPoint)
+        let distance = simd_distance(startPoint, endPoint)
+        let midPoint = (startPoint + endPoint) / 2
+        
+        // Create line mesh
+        let lineMaterial = SimpleMaterial(color: .yellow, isMetallic: false)
+        let lineMesh = MeshResource.generateBox(size: [distance, 0.002, 0.002])
+        let lineEntity = ModelEntity(mesh: lineMesh, materials: [lineMaterial])
+        
+        // Position and orient the line
+        lineEntity.position = midPoint
+        lineEntity.look(at: endPoint, from: midPoint, relativeTo: nil)
+        
+        // Add to scene
+        if let anchor = scene.anchors.first {
+            anchor.addChild(lineEntity)
+            measurementLineEntity = lineEntity
+        }
     }
 }
 

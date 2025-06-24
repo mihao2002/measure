@@ -23,7 +23,7 @@ class SharedARView: ARView {
     private let visionQueue = DispatchQueue(label: "vision-edge-detection")
     var onEdgeLengthUpdate: ((Float) -> Void)?
 
-    override init(frame: CGRect) {
+    required init(frame: CGRect) {
         super.init(frame: frame)
         self.setupFrameProcessing()
     }
@@ -49,22 +49,29 @@ class SharedARView: ARView {
         visionQueue.async {
             do {
                 try handler.perform([request])
-                guard let observations = request.results?.first else { return }
+                guard let observations = request.results?.first as? VNContoursObservation else { return }
 
                 let center = CGPoint(x: 0.5, y: 0.5)
-                if let edge = observations.normalizedContours.first(where: { contour in
-                    return contour.normalizedPoints.contains(where: {
-                        abs($0.x - center.x) < 0.05 && abs($0.y - center.y) < 0.05
-                    })
-                }) {
-                    DispatchQueue.main.async {
-                        self.raycastLength(at: CGPoint(x: self.bounds.midX, y: self.bounds.midY))
+                let contours = observations.topLevelContours
+
+                for contour in contours {
+                    let points = contour.normalizedPoints
+                    let isNearCenter = points.contains { point in
+                        abs(point.x - center.x) < 0.05 && abs(point.y - center.y) < 0.05
+                    }
+
+                    if isNearCenter {
+                        DispatchQueue.main.async {
+                            self.raycastLength(at: CGPoint(x: self.bounds.midX, y: self.bounds.midY))
+                        }
+                        break
                     }
                 }
             } catch {
                 print("Vision error: \(error)")
             }
         }
+
     }
 
     private func raycastLength(at screenPoint: CGPoint) {
@@ -103,32 +110,4 @@ struct ARViewContainer: UIViewRepresentable {
     func updateUIView(_ uiView: SharedARView, context: Context) {}
 }
 
-struct ContentView: View {
-    @State private var edgeLength: Float = 0.0
 
-    var body: some View {
-        ZStack {
-            ARViewContainer(edgeLength: $edgeLength)
-                .edgesIgnoringSafeArea(.all)
-
-            VStack {
-                Spacer()
-                Text(String(format: "Edge Length: %.2f m", edgeLength))
-                    .padding()
-                    .background(Color.black.opacity(0.6))
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
-                    .padding(.bottom, 30)
-            }
-        }
-    }
-}
-
-@main
-struct EdgeMeasureApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
-    }
-}

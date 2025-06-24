@@ -1,0 +1,134 @@
+
+// EdgeMeasureApp.swift
+// MVP Prototype: Detect and measure an edge using ARKit + Vision + SwiftUI
+
+import SwiftUI
+import RealityKit
+import ARKit
+import Vision
+import Combine
+
+// MARK: - Shared ARView Singleton
+class SharedARView: ARView {
+    static let instance: SharedARView = {
+        let arView = SharedARView(frame: .zero)
+        let config = ARWorldTrackingConfiguration()
+        config.planeDetection = [.horizontal, .vertical]
+        config.sceneReconstruction = .mesh
+        arView.session.run(config)
+        return arView
+    }()
+
+    private var framePublisher: AnyCancellable?
+    private let visionQueue = DispatchQueue(label: "vision-edge-detection")
+    var onEdgeLengthUpdate: ((Float) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        self.setupFrameProcessing()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func setupFrameProcessing() {
+        framePublisher = Timer.publish(every: 1.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.processCurrentFrame() }
+    }
+
+    private func processCurrentFrame() {
+        guard let frame = session.currentFrame else { return }
+
+        let pixelBuffer = frame.capturedImage
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
+
+        let request = VNDetectContoursRequest()
+        request.detectsDarkOnLight = true
+
+        visionQueue.async {
+            do {
+                try handler.perform([request])
+                guard let observations = request.results?.first else { return }
+
+                let center = CGPoint(x: 0.5, y: 0.5)
+                if let edge = observations.normalizedContours.first(where: { contour in
+                    return contour.normalizedPoints.contains(where: {
+                        abs($0.x - center.x) < 0.05 && abs($0.y - center.y) < 0.05
+                    })
+                }) {
+                    DispatchQueue.main.async {
+                        self.raycastLength(at: CGPoint(x: self.bounds.midX, y: self.bounds.midY))
+                    }
+                }
+            } catch {
+                print("Vision error: \(error)")
+            }
+        }
+    }
+
+    private func raycastLength(at screenPoint: CGPoint) {
+        let results = raycast(from: screenPoint, allowing: .estimatedPlane, alignment: .any)
+        guard let result1 = results.first else { return }
+
+        let offset = CGPoint(x: screenPoint.x + 10, y: screenPoint.y)
+        let results2 = raycast(from: offset, allowing: .estimatedPlane, alignment: .any)
+        guard let result2 = results2.first else { return }
+
+        let p1 = result1.worldTransform.translation
+        let p2 = result2.worldTransform.translation
+        let distance = simd_distance(p1, p2)
+
+        onEdgeLengthUpdate?(distance)
+    }
+}
+
+extension simd_float4x4 {
+    var translation: SIMD3<Float> {
+        return [columns.3.x, columns.3.y, columns.3.z]
+    }
+}
+
+struct ARViewContainer: UIViewRepresentable {
+    @Binding var edgeLength: Float
+
+    func makeUIView(context: Context) -> SharedARView {
+        let arView = SharedARView.instance
+        arView.onEdgeLengthUpdate = { length in
+            self.edgeLength = length
+        }
+        return arView
+    }
+
+    func updateUIView(_ uiView: SharedARView, context: Context) {}
+}
+
+struct ContentView: View {
+    @State private var edgeLength: Float = 0.0
+
+    var body: some View {
+        ZStack {
+            ARViewContainer(edgeLength: $edgeLength)
+                .edgesIgnoringSafeArea(.all)
+
+            VStack {
+                Spacer()
+                Text(String(format: "Edge Length: %.2f m", edgeLength))
+                    .padding()
+                    .background(Color.black.opacity(0.6))
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+                    .padding(.bottom, 30)
+            }
+        }
+    }
+}
+
+@main
+struct EdgeMeasureApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}

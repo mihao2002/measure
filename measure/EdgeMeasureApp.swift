@@ -26,10 +26,12 @@ class SharedARView: ARView {
     private var centerIndicatorView: UIView?
     private var measurementLineView: UIView?
     private var edgeHighlightView: UIView?
+    private var contourOverlayView: UIView?
     
     // Store the last detected edge points for real-time updates
     private var lastDetectedEdgePoints: (SIMD3<Float>, SIMD3<Float>)?
     private var lastEdgeFound: Bool = false
+    private var lastDetectedContour: VNContour?
 
     required init(frame: CGRect) {
         super.init(frame: frame)
@@ -80,6 +82,7 @@ class SharedARView: ARView {
                     // No edge found, clear stored points
                     self.lastDetectedEdgePoints = nil
                     self.lastEdgeFound = false
+                    self.lastDetectedContour = nil
                 }
                 
                 // Store the detection state
@@ -99,9 +102,14 @@ class SharedARView: ARView {
         for contourIndex in 0..<observations.topLevelContours.count {
             let contour = observations.topLevelContours[contourIndex]
             if hasPointNearCenter(contour: contour, center: center) {
+                // Store the detected contour
+                lastDetectedContour = contour
                 return true
             }
         }
+        
+        // No contour found, clear stored contour
+        lastDetectedContour = nil
         return false
     }
     
@@ -121,7 +129,7 @@ class SharedARView: ARView {
         let results = raycast(from: screenPoint, allowing: .estimatedPlane, alignment: .any)
         guard let result1 = results.first else { return }
 
-        let offset = CGPoint(x: screenPoint.x + 10, y: screenPoint.y)
+        let offset = CGPoint(x: screenPoint.x + 50, y: screenPoint.y)  // Increased from 10 to 50 pixels
         let results2 = raycast(from: offset, allowing: .estimatedPlane, alignment: .any)
         guard let result2 = results2.first else { return }
 
@@ -151,6 +159,13 @@ class SharedARView: ARView {
         if let lineView = measurementLineView {
             addSubview(lineView)
             lineView.isHidden = true
+        }
+        
+        // Create contour overlay
+        contourOverlayView = createContourOverlayView()
+        if let contourView = contourOverlayView {
+            addSubview(contourView)
+            contourView.isHidden = true
         }
     }
     
@@ -182,11 +197,27 @@ class SharedARView: ARView {
         // Create measurement line layer
         let lineLayer = CAShapeLayer()
         lineLayer.strokeColor = UIColor.yellow.cgColor
-        lineLayer.lineWidth = 3.0
-        lineLayer.lineDashPattern = [5, 5] // Dashed line
+        lineLayer.lineWidth = 6.0  // Make it thicker
+        lineLayer.lineDashPattern = [10, 5] // More visible dashed line
+        lineLayer.fillColor = UIColor.clear.cgColor
         lineView.layer.addSublayer(lineLayer)
         
         return lineView
+    }
+    
+    private func createContourOverlayView() -> UIView {
+        let contourView = UIView(frame: bounds)
+        contourView.backgroundColor = UIColor.clear
+        contourView.isUserInteractionEnabled = false
+        
+        // Create contour drawing layer
+        let contourLayer = CAShapeLayer()
+        contourLayer.strokeColor = UIColor.cyan.cgColor
+        contourLayer.lineWidth = 2.0
+        contourLayer.fillColor = UIColor.clear.cgColor
+        contourView.layer.addSublayer(contourLayer)
+        
+        return contourView
     }
     
     private func updateVisualFeedback(edgeFound: Bool, measurementPoints: (CGPoint, CGPoint)? = nil) {
@@ -197,6 +228,9 @@ class SharedARView: ARView {
                     self.showMeasurementLine(from: points.0, to: points.1)
                 }
                 
+                // Show detected contour
+                self.showDetectedContour()
+                
                 // Highlight center indicator
                 self.centerIndicatorView?.backgroundColor = UIColor.green.withAlphaComponent(0.3)
             } else {
@@ -205,6 +239,9 @@ class SharedARView: ARView {
                 
                 // Hide measurement line
                 self.measurementLineView?.isHidden = true
+                
+                // Hide contour overlay
+                self.contourOverlayView?.isHidden = true
             }
         }
     }
@@ -213,6 +250,9 @@ class SharedARView: ARView {
         guard let lineView = measurementLineView else { return }
         
         lineView.isHidden = false
+        
+        // Debug: Print the measurement points
+        print("Measurement line: from \(startPoint) to \(endPoint)")
         
         // Create path for the measurement line
         let path = UIBezierPath()
@@ -223,6 +263,42 @@ class SharedARView: ARView {
         if let lineLayer = lineView.layer.sublayers?.first as? CAShapeLayer {
             lineLayer.path = path.cgPath
         }
+    }
+
+    private func showDetectedContour() {
+        guard let contourView = contourOverlayView,
+              let contour = lastDetectedContour else { return }
+        
+        contourView.isHidden = false
+        
+        // Convert normalized contour points to screen coordinates
+        let path = UIBezierPath()
+        let points = contour.normalizedPoints
+        
+        guard !points.isEmpty else { return }
+        
+        // Convert first point to screen coordinates
+        let firstPoint = CGPoint(
+            x: CGFloat(points[0].x) * bounds.width,
+            y: CGFloat(points[0].y) * bounds.height
+        )
+        path.move(to: firstPoint)
+        
+        // Add remaining points
+        for i in 1..<points.count {
+            let point = CGPoint(
+                x: CGFloat(points[i].x) * bounds.width,
+                y: CGFloat(points[i].y) * bounds.height
+            )
+            path.addLine(to: point)
+        }
+        
+        // Update the contour layer
+        if let contourLayer = contourView.layer.sublayers?.first as? CAShapeLayer {
+            contourLayer.path = path.cgPath
+        }
+        
+        print("Drawing contour with \(points.count) points")
     }
 
     private func updateVisualFeedbackFromLastDetection() {

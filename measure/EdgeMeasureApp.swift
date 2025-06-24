@@ -23,22 +23,33 @@ class SharedARView: ARView {
     var onEdgeLengthUpdate: ((Float) -> Void)?
     
     // Visual elements for edge detection feedback
-    private var edgeHighlightEntity: ModelEntity?
-    private var measurementLineEntity: ModelEntity?
-    private var centerIndicatorEntity: ModelEntity?
+    private var centerIndicatorView: UIView?
+    private var measurementLineView: UIView?
+    private var edgeHighlightView: UIView?
+    
+    // Store the last detected edge points for real-time updates
+    private var lastDetectedEdgePoints: (SIMD3<Float>, SIMD3<Float>)?
+    private var lastEdgeFound: Bool = false
 
     required init(frame: CGRect) {
         super.init(frame: frame)
         self.setupFrameProcessing()
         self.setupVisualElements()
+        self.setupSessionDelegate()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private func setupSessionDelegate() {
+        session.delegate = self
+    }
+
     private func setupFrameProcessing() {
         framePublisher = Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in self?.processCurrentFrame() }
+            .sink { [weak self] _ in 
+                self?.processCurrentFrame()
+            }
     }
 
     private func processCurrentFrame() {
@@ -65,7 +76,14 @@ class SharedARView: ARView {
                     DispatchQueue.main.async {
                         self.raycastLength(at: CGPoint(x: self.bounds.midX, y: self.bounds.midY))
                     }
+                } else {
+                    // No edge found, clear stored points
+                    self.lastDetectedEdgePoints = nil
+                    self.lastEdgeFound = false
                 }
+                
+                // Store the detection state
+                self.lastEdgeFound = edgeFound
                 
                 // Update visual feedback
                 self.updateVisualFeedback(edgeFound: edgeFound)
@@ -113,30 +131,65 @@ class SharedARView: ARView {
 
         onEdgeLengthUpdate?(distance)
         
-        // Update visual feedback with measurement points
-        updateVisualFeedback(edgeFound: true, measurementPoints: (p1, p2))
+        // Store the 3D world points for continuous updates
+        lastDetectedEdgePoints = (p1, p2)
+        
+        // Update visual feedback with current 2D projection
+        updateVisualFeedbackWithCurrentProjection()
     }
 
     // MARK: - Visual Feedback Methods
     private func setupVisualElements() {
         // Create center indicator (crosshair)
-        let centerMaterial = SimpleMaterial(color: .red, isMetallic: false)
-        let centerMesh = MeshResource.generateBox(size: 0.01)
-        centerIndicatorEntity = ModelEntity(mesh: centerMesh, materials: [centerMaterial])
+        centerIndicatorView = createCenterIndicator()
+        if let centerView = centerIndicatorView {
+            addSubview(centerView)
+        }
         
-        // Create measurement line
-        let lineMaterial = SimpleMaterial(color: .yellow, isMetallic: false)
-        let lineMesh = MeshResource.generateBox(size: [0.1, 0.002, 0.002])
-        measurementLineEntity = ModelEntity(mesh: lineMesh, materials: [lineMaterial])
-        
-        // Add to scene
-        if let centerIndicator = centerIndicatorEntity {
-            scene.addAnchor(AnchorEntity(world: [0, 0, -0.5]))
-            scene.anchors.first?.addChild(centerIndicator)
+        // Create measurement line overlay
+        measurementLineView = createMeasurementLineView()
+        if let lineView = measurementLineView {
+            addSubview(lineView)
+            lineView.isHidden = true
         }
     }
     
-    private func updateVisualFeedback(edgeFound: Bool, measurementPoints: (SIMD3<Float>, SIMD3<Float>)? = nil) {
+    private func createCenterIndicator() -> UIView {
+        let indicator = UIView(frame: CGRect(x: 0, y: 0, width: 40, height: 40))
+        indicator.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        indicator.backgroundColor = UIColor.clear
+        
+        // Create crosshair lines
+        let horizontalLine = UIView(frame: CGRect(x: 0, y: 19, width: 40, height: 2))
+        horizontalLine.backgroundColor = UIColor.red
+        horizontalLine.layer.cornerRadius = 1
+        
+        let verticalLine = UIView(frame: CGRect(x: 19, y: 0, width: 2, height: 40))
+        verticalLine.backgroundColor = UIColor.red
+        verticalLine.layer.cornerRadius = 1
+        
+        indicator.addSubview(horizontalLine)
+        indicator.addSubview(verticalLine)
+        
+        return indicator
+    }
+    
+    private func createMeasurementLineView() -> UIView {
+        let lineView = UIView(frame: bounds)
+        lineView.backgroundColor = UIColor.clear
+        lineView.isUserInteractionEnabled = false
+        
+        // Create measurement line layer
+        let lineLayer = CAShapeLayer()
+        lineLayer.strokeColor = UIColor.yellow.cgColor
+        lineLayer.lineWidth = 3.0
+        lineLayer.lineDashPattern = [5, 5] // Dashed line
+        lineView.layer.addSublayer(lineLayer)
+        
+        return lineView
+    }
+    
+    private func updateVisualFeedback(edgeFound: Bool, measurementPoints: (CGPoint, CGPoint)? = nil) {
         DispatchQueue.main.async {
             if edgeFound {
                 // Show measurement line
@@ -145,40 +198,53 @@ class SharedARView: ARView {
                 }
                 
                 // Highlight center indicator
-                self.centerIndicatorEntity?.model?.materials = [SimpleMaterial(color: .green, isMetallic: false)]
+                self.centerIndicatorView?.backgroundColor = UIColor.green.withAlphaComponent(0.3)
             } else {
                 // Reset center indicator
-                self.centerIndicatorEntity?.model?.materials = [SimpleMaterial(color: .red, isMetallic: false)]
+                self.centerIndicatorView?.backgroundColor = UIColor.clear
                 
                 // Hide measurement line
-                self.measurementLineEntity?.removeFromParent()
+                self.measurementLineView?.isHidden = true
             }
         }
     }
     
-    private func showMeasurementLine(from startPoint: SIMD3<Float>, to endPoint: SIMD3<Float>) {
-        // Remove existing line
-        measurementLineEntity?.removeFromParent()
+    private func showMeasurementLine(from startPoint: CGPoint, to endPoint: CGPoint) {
+        guard let lineView = measurementLineView else { return }
         
-        // Calculate line properties
-        let direction = normalize(endPoint - startPoint)
-        let distance = simd_distance(startPoint, endPoint)
-        let midPoint = (startPoint + endPoint) / 2
+        lineView.isHidden = false
         
-        // Create line mesh
-        let lineMaterial = SimpleMaterial(color: .yellow, isMetallic: false)
-        let lineMesh = MeshResource.generateBox(size: [distance, 0.002, 0.002])
-        let lineEntity = ModelEntity(mesh: lineMesh, materials: [lineMaterial])
+        // Create path for the measurement line
+        let path = UIBezierPath()
+        path.move(to: startPoint)
+        path.addLine(to: endPoint)
         
-        // Position and orient the line
-        lineEntity.position = midPoint
-        lineEntity.look(at: endPoint, from: midPoint, relativeTo: nil)
-        
-        // Add to scene
-        if let anchor = scene.anchors.first {
-            anchor.addChild(lineEntity)
-            measurementLineEntity = lineEntity
+        // Update the line layer
+        if let lineLayer = lineView.layer.sublayers?.first as? CAShapeLayer {
+            lineLayer.path = path.cgPath
         }
+    }
+
+    private func updateVisualFeedbackFromLastDetection() {
+        if lastEdgeFound {
+            updateVisualFeedbackWithCurrentProjection()
+        } else {
+            updateVisualFeedback(edgeFound: false)
+        }
+    }
+    
+    private func updateVisualFeedbackWithCurrentProjection() {
+        guard let points = lastDetectedEdgePoints else {
+            updateVisualFeedback(edgeFound: false)
+            return
+        }
+        
+        // Convert current 3D world coordinates to 2D screen coordinates
+        let screenPoint1 = project(points.0, orientation: .portrait, viewportSize: CGSize(width: bounds.width, height: bounds.height))
+        let screenPoint2 = project(points.1, orientation: .portrait, viewportSize: CGSize(width: bounds.width, height: bounds.height))
+        
+        // Update visual feedback with current 2D projection
+        updateVisualFeedback(edgeFound: true, measurementPoints: (screenPoint1, screenPoint2))
     }
 }
 
@@ -200,6 +266,14 @@ struct ARViewContainer: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: SharedARView, context: Context) {}
+}
+
+// MARK: - ARSessionDelegate
+extension SharedARView: ARSessionDelegate {
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        // Update visual feedback on every frame for smooth tracking
+        updateVisualFeedbackFromLastDetection()
+    }
 }
 
 

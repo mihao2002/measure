@@ -240,8 +240,8 @@ class SharedARView: ARView {
         }
         
         // Convert current 3D world coordinates to 2D screen coordinates
-        let screenPoint1 = project(points.0, orientation: UIDevice.current.orientation, viewportSize: CGSize(width: bounds.width, height: bounds.height))
-        let screenPoint2 = project(points.1, orientation: UIDevice.current.orientation, viewportSize: CGSize(width: bounds.width, height: bounds.height))
+        let screenPoint1 = project(points.0)
+        let screenPoint2 = project(points.1)
         
         // Update visual feedback with current 2D projection
         updateVisualFeedback(edgeFound: true, measurementPoints: (screenPoint1, screenPoint2))

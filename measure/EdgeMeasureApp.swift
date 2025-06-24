@@ -54,7 +54,7 @@ class SharedARView: ARView {
 
                 let center = CGPoint(x: 0.5, y: 0.5)
                 
-                if let edge = self.findEdgeNearCenter(observations: observations, center: center) {
+                if self.findEdgeNearCenter(observations: observations, center: center) {
                     DispatchQueue.main.async {
                         self.raycastLength(at: CGPoint(x: self.bounds.midX, y: self.bounds.midY))
                     }
@@ -66,14 +66,21 @@ class SharedARView: ARView {
 
     }
 
-    private func findEdgeNearCenter(observations: VNContoursObservation, center: CGPoint) -> VNContoursObservation? {
-        return observations.normalizedContours.first(where: { contour in
-            return self.hasPointNearCenter(contour: contour, center: center)
-        })
+    private func findEdgeNearCenter(observations: VNContoursObservation, center: CGPoint) -> Bool {
+        // Check if any contour has points near the center
+        for contourIndex in 0..<observations.topLevelContours.count {
+            let contour = observations.topLevelContours[contourIndex]
+            if hasPointNearCenter(contour: contour, center: center) {
+                return true
+            }
+        }
+        return false
     }
     
     private func hasPointNearCenter(contour: VNContoursObservation, center: CGPoint) -> Bool {
-        return contour.normalizedPoints.contains(where: { point in
+        // Get the normalized points for this contour
+        let points = contour.normalizedPoints
+        return points.contains(where: { point in
             return self.isPointNearCenter(point: point, center: center)
         })
     }

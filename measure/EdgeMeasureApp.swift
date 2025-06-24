@@ -31,7 +31,7 @@ class SharedARView: ARView {
     // Store the last detected edge points for real-time updates
     private var lastDetectedEdgePoints: (SIMD3<Float>, SIMD3<Float>)?
     private var lastEdgeFound: Bool = false
-    private var lastDetectedSegment: VNLineSegment?
+    private var lastDetectedSegment: VNLineSegmentsObservation?
 
     required init(frame: CGRect) {
         super.init(frame: frame)
@@ -104,7 +104,7 @@ class SharedARView: ARView {
             let segment = observations.lineSegments[segmentIndex]
             if hasPointNearCenter(segment: segment, center: center) {
                 // Store the detected segment
-                lastDetectedSegment = segment
+                lastDetectedSegment = observations
                 return true
             }
         }
@@ -114,16 +114,16 @@ class SharedARView: ARView {
         return false
     }
     
-    private func hasPointNearCenter(segment: VNLineSegment, center: CGPoint) -> Bool {
-        // Get the normalized points for this segment
-        let points = segment.normalizedPoints
-        return points.contains(where: { point in
-            return self.isPointNearCenter(point: point, center: center)
-        })
-    }
-    
-    private func isPointNearCenter(point: simd_float2, center: CGPoint) -> Bool {
-        return abs(point.x - Float(center.x)) < 0.05 && abs(point.y - Float(center.y)) < 0.05
+    private func hasPointNearCenter(segment: VNLineSegmentsObservation.LineSegment, center: CGPoint) -> Bool {
+        // Check if the line segment passes near the center
+        let startPoint = segment.startPoint
+        let endPoint = segment.endPoint
+        
+        // Check if either endpoint is near center, or if line passes through center
+        let startNearCenter = abs(startPoint.x - Float(center.x)) < 0.05 && abs(startPoint.y - Float(center.y)) < 0.05
+        let endNearCenter = abs(endPoint.x - Float(center.x)) < 0.05 && abs(endPoint.y - Float(center.y)) < 0.05
+        
+        return startNearCenter || endNearCenter
     }
 
     private func raycastLength(at screenPoint: CGPoint) {
@@ -268,30 +268,30 @@ class SharedARView: ARView {
 
     private func showDetectedLineSegment() {
         guard let contourView = contourOverlayView,
-              let segment = lastDetectedSegment else { return }
+              let observations = lastDetectedSegment else { return }
         
         contourView.isHidden = false
         
-        // Convert normalized line segment points to screen coordinates
+        // Find the line segment that passes near the center
+        let center = CGPoint(x: 0.5, y: 0.5)
         let path = UIBezierPath()
-        let points = segment.normalizedPoints
         
-        guard !points.isEmpty else { return }
-        
-        // Convert first point to screen coordinates
-        let firstPoint = CGPoint(
-            x: CGFloat(points[0].x) * bounds.width,
-            y: CGFloat(points[0].y) * bounds.height
-        )
-        path.move(to: firstPoint)
-        
-        // Add remaining points
-        for i in 1..<points.count {
-            let point = CGPoint(
-                x: CGFloat(points[i].x) * bounds.width,
-                y: CGFloat(points[i].y) * bounds.height
-            )
-            path.addLine(to: point)
+        for segment in observations.lineSegments {
+            if hasPointNearCenter(segment: segment, center: center) {
+                // Convert normalized line segment points to screen coordinates
+                let startPoint = CGPoint(
+                    x: CGFloat(segment.startPoint.x) * bounds.width,
+                    y: CGFloat(segment.startPoint.y) * bounds.height
+                )
+                let endPoint = CGPoint(
+                    x: CGFloat(segment.endPoint.x) * bounds.width,
+                    y: CGFloat(segment.endPoint.y) * bounds.height
+                )
+                
+                path.move(to: startPoint)
+                path.addLine(to: endPoint)
+                break
+            }
         }
         
         // Update the contour layer
@@ -299,7 +299,7 @@ class SharedARView: ARView {
             contourLayer.path = path.cgPath
         }
         
-        print("Drawing line segment with \(points.count) points")
+        print("Drawing line segment")
     }
 
     private func updateVisualFeedbackFromLastDetection() {

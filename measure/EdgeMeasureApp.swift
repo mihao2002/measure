@@ -74,8 +74,12 @@ class SharedARView: ARView {
     
     private func hasPointNearCenter(contour: VNContoursObservation, center: CGPoint) -> Bool {
         return contour.normalizedPoints.contains(where: { point in
-            abs(point.x - center.x) < 0.05 && abs(point.y - center.y) < 0.05
+            return self.isPointNearCenter(point: point, center: center)
         })
+    }
+    
+    private func isPointNearCenter(point: CGPoint, center: CGPoint) -> Bool {
+        return abs(point.x - center.x) < 0.05 && abs(point.y - center.y) < 0.05
     }
 
     private func raycastLength(at screenPoint: CGPoint) {

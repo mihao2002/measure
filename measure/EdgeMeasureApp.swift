@@ -68,9 +68,13 @@ class SharedARView: ARView {
 
     private func findEdgeNearCenter(observations: VNContoursObservation, center: CGPoint) -> VNContoursObservation? {
         return observations.normalizedContours.first(where: { contour in
-            return contour.normalizedPoints.contains(where: { point in
-                abs(point.x - center.x) < 0.05 && abs(point.y - center.y) < 0.05
-            })
+            return self.hasPointNearCenter(contour: contour, center: center)
+        })
+    }
+    
+    private func hasPointNearCenter(contour: VNContoursObservation, center: CGPoint) -> Bool {
+        return contour.normalizedPoints.contains(where: { point in
+            abs(point.x - center.x) < 0.05 && abs(point.y - center.y) < 0.05
         })
     }
 
